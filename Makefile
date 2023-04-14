@@ -1,16 +1,16 @@
 SRC_DIR=./src
 CC=g++
-CXXFLAGS=
+CXXFLAGS=-g
 
 # SOURCES = server.cc client.cc
 # OBJS = $(addsuffix .o, $(basename $(notdir $(SOURCES))))
 
+all: server main
+
 server:
-	$(CC) $(CXXFLAGS) $(SRC_DIR)/server.cc -o server
-client:
-	$(CC) $(CXXFLAGS) $(SRC_DIR)/client.cc -o client
+	$(CC) $(CXXFLAGS) -c $(SRC_DIR)/server.cc
 
-all: server client
-
+main:
+	$(CC) $(CXXFLAGS) server.o $(SRC_DIR)/main.cc -o main
 clean:
-	rm -rf server client
+	rm -rf server.o main
