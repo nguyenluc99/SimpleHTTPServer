@@ -73,7 +73,7 @@ int main(int argc, char* argv[])
     HttpServer server(std::string(host), HTTP_PORT);
     // testLimit();
     // atexit(exitMain);
-    setSize();
+    // setSize();
     server.openSocket();
     // server.openEV();
     return 0;

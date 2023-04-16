@@ -12,10 +12,11 @@
 #include <arpa/inet.h>
 #include <sys/un.h>
 
-#include <ulimit.h>
+// #include <ulimit.h>
 #include <sys/resource.h>
 #include "server.h"
 #include <fcntl.h>
+#include <thread>
 #include <sstream>
 
 #include <fstream>
@@ -23,18 +24,16 @@
 namespace my_http_server
 {
 
-    ev_io stdin_watcher;
-    ev_signal sig;
+    // ev_io stdin_watcher;
+    // ev_signal sig;
     // int sig = SIGINT;
     const char* sampleResponse = "HTTP/1.1 200 OK\nServer: Hello\nContent-Length: 13\nContent-Type: text/plain\n\nHello, world\n";
     const int sampleLength = 88;
     SharedThread    thread_infos[THREAD_POOL_SIZE];
     int             epoll_list[THREAD_POOL_SIZE];
     epoll_event worker_events_list[THREAD_POOL_SIZE][MAX_EVENTS];
-    // pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-    // pthread_mutex_t queue_mutex = PTHREAD_MUTEX_INITIALIZER;
-    // int sharedEpollfd = -1;
-    // int socketList[NUM_SOCKET];
+    int socketList[SOCKET_POOL_SIZE];
+    std::thread threadList[SOCKET_POOL_SIZE];
     // TSQueue<std::pair<int, int> > fd_queue; // first = epollfd, second = event_fd;
 
     // another callback, this time for a time-out
@@ -59,6 +58,7 @@ namespace my_http_server
         std::string *msg = new std::string("HTTP/1.1 200 OK\nServer: Hello\nContent-Length: 13\nContent-Type: text/plain\n\nHello, world\n");
         return msg;
     };
+
     std::string addHeaderToResponse(std::string content)
     {
         std::stringstream ss;
@@ -69,34 +69,35 @@ namespace my_http_server
         return ss.str();
     };
 
-    int HttpServer::init_and_bind(int port)
+    void HttpServer::init_and_bind(int port)
     {
         struct sockaddr_in servaddr;
         socklen_t len;
         int opt = 1;
         int server_fd;
         int idx;
-    
-        server_fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
-        len = sizeof(servaddr);
+        for(idx = 0; idx < SOCKET_POOL_SIZE; idx++)
+        {
+            server_fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
+            len = sizeof(servaddr);
 
-        if (server_fd == -1)
-        handle_error("SOCKET ERROR");
-        // Forcefully attaching socket to the port SOCKET_PORT
-        if (setsockopt(server_fd, SOL_SOCKET,
-                    SO_REUSEADDR | SO_REUSEPORT, &opt,
-                    // SO_REUSEADDR, &opt,
-                    sizeof(opt)))
-            handle_error("setsockopt");
+            if (server_fd == -1)
+            handle_error("SOCKET ERROR");
+            // Forcefully attaching socket to the port SOCKET_PORT
+            if (setsockopt(server_fd, SOL_SOCKET,
+                        SO_REUSEADDR | SO_REUSEPORT, &opt,
+                        // SO_REUSEADDR, &opt,
+                        sizeof(opt)))
+                handle_error("setsockopt");
 
-        servaddr.sin_family = AF_INET;
-        servaddr.sin_addr.s_addr = INADDR_ANY;
-        servaddr.sin_port = htons(getPort());
+            servaddr.sin_family = AF_INET;
+            servaddr.sin_addr.s_addr = INADDR_ANY;
+            servaddr.sin_port = htons(getPort());
 
-        if (bind(server_fd, (struct sockaddr *) &servaddr, sizeof(servaddr)) == -1)
-            handle_error("bind");
-            
-        return server_fd;
+            if (bind(server_fd, (struct sockaddr *) &servaddr, sizeof(servaddr)) == -1)
+                handle_error("bind");
+            socketList[idx] = server_fd; 
+        }
     }
 
     int HttpServer::setnonblocking(int socket_fd) // https://stackoverflow.com/questions/27266346/how-to-set-file-descriptor-non-blocking
@@ -115,21 +116,6 @@ namespace my_http_server
         }
         return 0;
     }
-
-    // int getResource()
-    // {
-    //     int idx;
-    //     pthread_mutex_lock(&mutex);
-    //     for (idx = 0; idx < THREAD_POOL_SIZE; idx++)
-    //         if (thread_infos[idx].state == THREAD_WAITING)
-    //         {
-    //             thread_infos[idx].state = THREAD_RUNNING; // ask child to start processing on events[idx].data.fd
-    //             pthread_mutex_unlock(&mutex);
-    //             return idx;
-    //         }
-    //     pthread_mutex_unlock(&mutex);
-    //     return -1;
-    // }
 
     std::string getResponse()
     {
@@ -255,46 +241,41 @@ namespace my_http_server
     }
 
 
-    // now, run only 1 socket with many epoll.
-    void startSocket(int socket_fd)
+    // now, run only several sockets with many epoll.
+    void startSocket()
     {
         int idx, s;
         struct epoll_event event;
-        
-        int opt;
+        int opt, socket_fd;
 
-        opt = fcntl(socket_fd, F_GETFD);
-        if (opt < 0) {
-            printf("fcntl(F_GETFD) fail.");
-            handle_error("setnonblocking");
+        for(idx = 0; idx < SOCKET_POOL_SIZE; idx++)
+        {
+            socket_fd = socketList[idx];
+            opt = fcntl(socket_fd, F_GETFD);
+            if (opt < 0) {
+                printf("fcntl(F_GETFD) fail.");
+                handle_error("setnonblocking");
+            }
+            opt |= O_NONBLOCK;
+            if (fcntl(socket_fd, F_SETFD, opt) < 0) {
+                printf("fcntl(F_SETFD) fail.");
+                handle_error("setnonblocking");
+            }
+            
+            s = listen(socket_fd, BACKLOGSIZE);
+            if (s == -1)
+                handle_error("listener");
         }
-        opt |= O_NONBLOCK;
-        if (fcntl(socket_fd, F_SETFD, opt) < 0) {
-            printf("fcntl(F_SETFD) fail.");
-            handle_error("setnonblocking");
-        }
-        
-        s = listen(socket_fd, BACKLOGSIZE);
-        if (s == -1)
-            handle_error("listener");        
     }
 
-
-    void HttpServer::openSocket()
+    void startSocketThread(int socket_idx)
     {
-        int s;
-        struct epoll_event events[MAX_EVENTS];
-        int currentWorker = 0;
+        int socket_fd = socketList[socket_idx];
+        int currentWorker = 0, s;
         EventData *client_data;
 
         struct sockaddr in_addr;
         socklen_t in_len;
-
-        int socket_fd = init_and_bind(getPort());
-        startSocket(socket_fd);
-        
-        initThreadResource();
-        initEpollList();
 
         /* The event loop => socket keep listening */
         while (1)
@@ -303,24 +284,55 @@ namespace my_http_server
             if (client_fd < 0)
             {
                 // usleep(100);
-                continue;
-            }
-            // distribute client fd to a worker
-            client_data = new EventData();
-            client_data->fd = client_fd;
-            struct epoll_event event;
-            event.data.ptr = (void*) client_data;
-            event.events = EPOLLIN;
-
-            s = epoll_ctl(epoll_list[currentWorker], EPOLL_CTL_ADD, client_fd, &event);
-            if (s < 0)
-            {
-                printf("Error adding task to worker %d.", currentWorker);
-                perror("Error adding task to worker");
+                sched_yield();
             }
             else
-                currentWorker ++;
-            currentWorker %= THREAD_POOL_SIZE;
+            {
+                // distribute client fd to a worker
+                client_data = new EventData();
+                client_data->fd = client_fd;
+                struct epoll_event event;
+                event.data.ptr = (void*) client_data;
+                event.events = EPOLLIN;
+
+                int epollIdx = socket_idx * THREAD_POOL_SIZE/SOCKET_POOL_SIZE + currentWorker;
+                s = epoll_ctl(epoll_list[epollIdx], EPOLL_CTL_ADD, client_fd, &event);
+                // printf("Adding to epoll idx: %d, by socket_idx %d.\n", epollIdx, socket_idx);
+                if (s < 0)
+                {
+                    printf("Error adding task to worker %d.", currentWorker);
+                    perror("Error adding task to worker");
+                }
+                else
+                    currentWorker ++;
+                // each socket will manage THREAD_POOL_SIZE/SOCKET_POOL_SIZE thread. currentWorker is the order in that list.
+                currentWorker %= ((int) THREAD_POOL_SIZE/SOCKET_POOL_SIZE);
+            }
+        }
+    }
+    void HttpServer::openSocket()
+    {
+        int idx;
+        // struct epoll_event events[MAX_EVENTS];
+
+        init_and_bind(getPort());
+        startSocket();
+        
+        initThreadResource();
+        initEpollList();
+
+        // startSocketThread();
+
+        for (idx = 0; idx < SOCKET_POOL_SIZE; idx++)
+        {
+            // start  SOCKET_POOL_SIZE sockets to wait for client.// what to share?
+            // std::thread t1(startSocketThread);
+            threadList[idx] = std::thread(startSocketThread, idx);
+        }
+        // finished ?let join it.
+        for (idx = 0; idx < SOCKET_POOL_SIZE; idx++)
+        {
+            threadList[idx].join();
         }
     }
 

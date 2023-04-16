@@ -1,7 +1,7 @@
 SRC_DIR=./src
 CC=g++
-CXXFLAGS=-g
-LIBS=-lev -lpthread -pthread -fsplit-stack
+CXXFLAGS=
+LIBS=-pthread
 
 # SOURCES = server.cc client.cc
 # OBJS = $(addsuffix .o, $(basename $(notdir $(SOURCES))))
@@ -9,9 +9,9 @@ LIBS=-lev -lpthread -pthread -fsplit-stack
 all: server main
 
 server:
-	$(CC) $(CXXFLAGS) -c $(SRC_DIR)/server.cc $(LIBS)
+	$(CC) $(CXXFLAGS) -c $(SRC_DIR)/$@.cc $(LIBS) -o $(SRC_DIR)/$@
 
-main:
-	$(CC) $(CXXFLAGS) server.o $(SRC_DIR)/main.cc -o main  $(LIBS)
+main: server
+	$(CC) $(CXXFLAGS) $(SRC_DIR)/$< $(SRC_DIR)/$@.cc -o $@  $(LIBS)
 clean:
-	rm -rf server.o main
+	rm -rf $(SRC_DIR)/server main

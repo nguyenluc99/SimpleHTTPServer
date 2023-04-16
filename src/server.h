@@ -5,17 +5,17 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 
-#include <ev.h>
+// #include <ev.h>
 
 #include <unistd.h>
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <sys/un.h>
-#include <queue>
+// #include <queue>
 
-#include <ulimit.h>
+// #include <ulimit.h>
 #include <condition_variable>
-#include <iostream>
+// #include <iostream>
 #include <mutex>
 
 #include <string>
@@ -28,11 +28,11 @@
 
 namespace my_http_server
 {
-    static constexpr int BACKLOGSIZE = 5000;
-    // static constexpr int MAX_CONCURR_CONNECTION = 10000;
-    static constexpr int MAX_EVENTS = 10000;
-    static constexpr int THREAD_POOL_SIZE = 8;
-    static constexpr int BUFFER_SIZE = 1024;
+    static constexpr int BACKLOGSIZE        = 100000;
+    static constexpr int MAX_EVENTS         = 200000;
+    static constexpr int THREAD_POOL_SIZE   = 16;
+    static constexpr int SOCKET_POOL_SIZE   = 4;
+    static constexpr int BUFFER_SIZE        = 4096;
         
     struct EventData {
         EventData() : fd(0), length(0), cursor(0), buffer() {}
@@ -43,85 +43,85 @@ namespace my_http_server
     };
 
         // Thread-safe queue
-    template <typename T>
-    class TSQueue {
-    private:
-        // Underlying queue
-        std::queue<T> m_queue;
+    // template <typename T>
+    // class TSQueue {
+    // private:
+    //     // Underlying queue
+    //     std::queue<T> m_queue;
     
-        // mutex for thread synchronization
-        std::mutex m_mutex;
+    //     // mutex for thread synchronization
+    //     std::mutex m_mutex;
     
-        // Condition variable for signaling
-        std::condition_variable m_cond;
+    //     // Condition variable for signaling
+    //     std::condition_variable m_cond;
 
     
-    public:
-        int counter;
-        // Pushes an element to the queue
-        void push(T item)
-        {
+    // public:
+    //     int counter;
+    //     // Pushes an element to the queue
+    //     void push(T item)
+    //     {
     
-            // Acquire lock
-            std::unique_lock<std::mutex> lock(m_mutex);
+    //         // Acquire lock
+    //         std::unique_lock<std::mutex> lock(m_mutex);
     
-            // Add item
-            m_queue.push(item);
+    //         // Add item
+    //         m_queue.push(item);
     
-            // Notify one thread that
-            // is waiting
-            m_cond.notify_one();
-        }
+    //         // Notify one thread that
+    //         // is waiting
+    //         m_cond.notify_one();
+    //     }
     
-        // Pops an element off the queue
-        T pop()
-        {
+    //     // Pops an element off the queue
+    //     T pop()
+    //     {
     
-            // acquire lock
-            std::unique_lock<std::mutex> lock(m_mutex);
+    //         // acquire lock
+    //         std::unique_lock<std::mutex> lock(m_mutex);
     
-            // wait until queue is not empty
-            m_cond.wait(lock,
-                        [this]() { return !m_queue.empty(); });
+    //         // wait until queue is not empty
+    //         m_cond.wait(lock,
+    //                     [this]() { return !m_queue.empty(); });
     
-            // retrieve item
-            T item = m_queue.front();
-            m_queue.pop();
+    //         // retrieve item
+    //         T item = m_queue.front();
+    //         m_queue.pop();
     
-            // return item
-            return item;
-        }
+    //         // return item
+    //         return item;
+    //     }
 
-        int size()
-        {
-            // acquire lock
-            std::unique_lock<std::mutex> lock(m_mutex);
-            int size = m_queue.size();
-            return size;
-        }
+    //     int size()
+    //     {
+    //         // acquire lock
+    //         std::unique_lock<std::mutex> lock(m_mutex);
+    //         int size = m_queue.size();
+    //         return size;
+    //     }
 
-        bool empty()
-        {
-            // acquire lock
-            std::unique_lock<std::mutex> lock(m_mutex);
-            int size = m_queue.size();
-            return (size == 0);
-        }
+    //     bool empty()
+    //     {
+    //         // acquire lock
+    //         std::unique_lock<std::mutex> lock(m_mutex);
+    //         int size = m_queue.size();
+    //         return (size == 0);
+    //     }
         
-        // void popCount()
-        // {
-        //     // Acquire lock
-        //     std::unique_lock<std::mutex> lock(m_mutex);
-        //     counter --;
-        // }
-        int getCount()
-        {
-            // Acquire lock
-            std::unique_lock<std::mutex> lock(m_mutex);
-            int c = counter;
-            return c;
-        }
-    };
+    //     // void popCount()
+    //     // {
+    //     //     // Acquire lock
+    //     //     std::unique_lock<std::mutex> lock(m_mutex);
+    //     //     counter --;
+    //     // }
+    //     int getCount()
+    //     {
+    //         // Acquire lock
+    //         std::unique_lock<std::mutex> lock(m_mutex);
+    //         int c = counter;
+    //         return c;
+    //     }
+    // };
     
     typedef enum ThreadExeState
     {
@@ -141,24 +141,23 @@ namespace my_http_server
         SharedThread(){thread_idx=-1;};
         // SharedThread(){event_fd = -1; epollfd = -1; thread_idx = -1; state = THREAD_FREE;};
     } SharedThread;
-    typedef struct my_io        /* used for interaction with ev */
-    {
-        ev_io io;
-        // int epollfd;
-        SharedThread* shared;
-        // void *somedata;
-        // struct whatever *mostinteresting;
-    } my_io;
+    // typedef struct my_io        /* used for interaction with ev */
+    // {
+    //     ev_io io;
+    //     // int epollfd;
+    //     SharedThread* shared;
+    //     // void *somedata;
+    //     // struct whatever *mostinteresting;
+    // } my_io;
 
     extern SharedThread thread_infos[THREAD_POOL_SIZE];
-    extern pthread_mutex_t mutex;
     
     char* getIP();
     class HttpServer{
         private:
             std::string host;
             int port;
-            int init_and_bind(int port);
+            void init_and_bind(int port);
             int setnonblocking(int socket_fd);
             int setupServer(struct sockaddr_in& servaddr);
             // void handleConnection(int socket_fd, int epollfd);
