@@ -25,26 +25,15 @@
            do { perror(msg); exit(EXIT_FAILURE); } while (0)
 
 
-// #define SOCKET_PATH         "/tmp/my.sock"
-// #define BACKLOGSIZE  20000
-// #define MAX_EVENTS           10000
-// #define HTTP_PORT           3000
-// #define BASE_SHIFT          9
-// #define THREAD_POOL_SIZE         256
-// #define NUM_SOCKET          1
-// #define BUFFER_SIZE          4096
-
 
 namespace my_http_server
 {
-
-    static constexpr int BACKLOGSIZE = 1000;
+    static constexpr int BACKLOGSIZE = 5000;
     // static constexpr int MAX_CONCURR_CONNECTION = 10000;
     static constexpr int MAX_EVENTS = 10000;
-    static constexpr int THREAD_POOL_SIZE = 5;
-    static constexpr int BUFFER_SIZE = 4096;
-    
-    
+    static constexpr int THREAD_POOL_SIZE = 8;
+    static constexpr int BUFFER_SIZE = 1024;
+        
     struct EventData {
         EventData() : fd(0), length(0), cursor(0), buffer() {}
         int fd;

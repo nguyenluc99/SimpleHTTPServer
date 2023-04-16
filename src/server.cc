@@ -16,8 +16,9 @@
 #include <sys/resource.h>
 #include "server.h"
 #include <fcntl.h>
-#include <ev.h>
+#include <sstream>
 
+#include <fstream>
 
 namespace my_http_server
 {
@@ -27,8 +28,6 @@ namespace my_http_server
     // int sig = SIGINT;
     const char* sampleResponse = "HTTP/1.1 200 OK\nServer: Hello\nContent-Length: 13\nContent-Type: text/plain\n\nHello, world\n";
     const int sampleLength = 88;
-    // const char* sampleResponse = "dummy\n";
-    // const int sampleLength = 6;
     SharedThread    thread_infos[THREAD_POOL_SIZE];
     int             epoll_list[THREAD_POOL_SIZE];
     epoll_event worker_events_list[THREAD_POOL_SIZE][MAX_EVENTS];
@@ -38,84 +37,7 @@ namespace my_http_server
     // int socketList[NUM_SOCKET];
     // TSQueue<std::pair<int, int> > fd_queue; // first = epollfd, second = event_fd;
 
-    // int countWorkingThread()
-    // {
-    //     int count = 0, idx;
-    //     pthread_mutex_lock(&mutex);
-    //     for (idx = 0; idx < THREAD_POOL_SIZE; idx++) 
-    //         if (thread_infos[idx].state == THREAD_RUNNING)
-    //             count ++;
-    //     pthread_mutex_unlock(&mutex);
-    //     return count;
-    // }
-
-    // void stdin_cb (EV_P_ ev_io *w, int revents)
-    // {
-    //     puts ("stdin ready");
-    //     char buffer[100];
-    //     int size = read(0,buffer, 100);
-    //     puts("You enter\n");
-    //     printf("%s", buffer);
-    //     // for one-shot events, one must manually stop the watcher
-    //     // with its corresponding stop function.
-    //     ev_io_stop (EV_A_ w);
-        
-    //     // this causes all nested ev_run's to stop iterating
-    //     ev_break (EV_A_ EVBREAK_ALL);
-    // }
-
-    // void data_cb (EV_P_ ev_io *w_, int revents)
-    // {
-    //     struct my_io *w = (struct my_io *)w_;
-
-    //     // for one-shot events, one must manually stop the watcher
-    //     // with its corresponding stop function.
-    //     int size;
-    //     int bufferSize = 10;
-    //     char buffer[bufferSize] = {0};
-
-    //     // printf("Processing fd %d\n", w_->fd);
-    //     // while(1)
-    //     // {
-    //     size = read(w_->fd, buffer, bufferSize);
-    //     // usleep(100000);
-    //     send(w_->fd, sampleResponse, strlen(sampleResponse), 0);
-    //     // }
-    //     ev_io_stop (EV_A_ w_);
-    //     // this causes all nested ev_run's to stop iterating
-    //     ev_break (EV_A_ EVBREAK_ONE);
-    //     // else
-    //     //     printf("del %d from poll\n", w_->fd);
-
-
-    //     // TODO: fix this
-    //     // let the parent know that the child is processing the fd, so remove the fd from parent epollfd right now
-    //     struct epoll_event event;
-    //     event.data.fd = w->io.fd;
-    //     event.events = EPOLLIN | EPOLLET; // EPOLLET  = edge-triggered
-    //     int s = epoll_ctl (w->shared->epollfd, EPOLL_CTL_DEL, w->io.fd, &event);
-    //     // if (s < 0)
-    //     //     handle_error("epoll_ctl del connection");
-    //     /* Close conenction after reading */
-    //     close(w_->fd);
-    //     free(w->shared);
-    // }
-
     // another callback, this time for a time-out
-    void timeout_cb (EV_P_ ev_timer *w, int revents)
-    {
-        puts ("timeout");
-        ev_timer_stop (EV_A_ w);
-        // this causes the innermost ev_run to stop iterating
-        ev_break (EV_A_ EVBREAK_ONE);
-    }
-    // void
-    // sigint_cb (struct ev_loop *loop, ev_signal *w, int revents)
-    // {
-    //     printf("Jump");
-    //     ev_unloop (loop, EVUNLOOP_ALL);
-    // }
-
 
     char* getIP()
     {
@@ -136,6 +58,15 @@ namespace my_http_server
     {
         std::string *msg = new std::string("HTTP/1.1 200 OK\nServer: Hello\nContent-Length: 13\nContent-Type: text/plain\n\nHello, world\n");
         return msg;
+    };
+    std::string addHeaderToResponse(std::string content)
+    {
+        std::stringstream ss;
+        ss << "HTTP/1.1 200 OK\nServer: Sample HTTP Server\nContent-Length: ";
+        ss << std::to_string(content.size());
+        ss << "\nContent-Type: text/html\n\n";
+        ss << content;
+        return ss.str();
     };
 
     int HttpServer::init_and_bind(int port)
@@ -200,6 +131,27 @@ namespace my_http_server
     //     return -1;
     // }
 
+    std::string getResponse()
+    {
+        // const std::string filename = "./html/index.html";
+        std::stringstream ss;
+
+        ss << "<!DOCTYPE html><html lang=\"en\"><head>";
+        ss << "<style></style>";
+        ss << "<script type=\"text/javascript\"></script>";
+        ss << "</head><title>A HTML webpage in C++</title><body class=\"p25\" style=\"background-color: #fff8e8;\">";
+        ss << "<div>";
+
+        ss << "<h1> This is a header1 </h1>";
+        ss << "<h3> This is a header3 </h3>";
+        ss << "<p> This is a paragraph. I hope the background color is light yellow-orange. </p>";
+        ss << "<p> This is an other paragraph. Is this text in <span style=\"color:Red;\">Red</span> and <b>Bold</b>?. </p>";
+
+        ss << "</body>";
+        ss << "</head>\n";
+        return addHeaderToResponse(ss.str());
+    }
+
     void* threadStart(void* arg)
     {
         SharedThread* shared = (SharedThread*) arg;
@@ -223,7 +175,6 @@ namespace my_http_server
                     printf("ERROR HAPPENED, not EPOLLI\n");
                 else
                 {
-                    // process data here
                     edata = (EventData*) worker_events_list[workingThr][idx].data.ptr;
                     conn_fd = edata->fd;
                     bool done = false;
@@ -241,12 +192,13 @@ namespace my_http_server
                     {
                         done = 1;
                     }
-                    write(conn_fd, sampleResponse, sampleLength);
+                    std::string res = getResponse();
+                    write(conn_fd, res.c_str(), res.size());
 
                     /* Close conenction after reading */
                     close(conn_fd);
                     // TODO: Handle more deeply
-                    free(edata);// raised?
+                    delete edata;
                 }
             }
 
@@ -275,83 +227,7 @@ namespace my_http_server
             epoll_list[idx] = epoll_create1(0);
         }
     }
-    // void *checkThread(void* arg)
-    // {
-    //     while(1)
-    //     {
-    //         int workingThread = countWorkingThread();
-    //         // pthread_mutex_lock(&queue_mutex);
-    //         int queuesize = fd_queue.size();
-    //         // pthread_mutex_unlock(&queue_mutex);
-    //         printf("working thread is  %d / %d, queue size is %d\n", workingThread, (int)THREAD_POOL_SIZE, queuesize);
-    //         usleep(100000);
-    //     }
-    // }
-    // void startCheckingThread()
-    // {
-    //     pthread_t pid;
-    //     pthread_create(&pid, NULL, checkThread, NULL);
-    // }
-
-
-    // void HttpServer::handleConnection(int socket_fd, int epollfd)
-    // {
-    //     // printf("Connection arrived on fd %d\n", socket_fd);
-    //     // while(1)
-    //     // {
-    //         // printf("Handling %d requests\n", fd_queue.counter ++);
-    //         struct sockaddr in_addr;
-    //         socklen_t in_len;
-    //         int infd, s;
-    //         // char hbuf[NI_MAXHOST], sbuf[NI_MAXSERV];
-    //         struct epoll_event event;
-
-    //         in_len = sizeof(in_addr);
-    //         infd = accept4(socket_fd, &in_addr, &in_len, SOCK_NONBLOCK);
-    //         if (infd <= 0) // error
-    //         {
-    //             // if ((errno == EAGAIN) ||
-    //             //     (errno == EWOULDBLOCK))
-    //             // {
-    //             //     /* We have processed all incoming
-    //             //         connections. */
-    //             //     // break;
-    //             printf("ERROR");
-    //                 close(infd);
-    //                 return;
-    //             // }
-    //             // else
-    //             // {
-    //             //     close(infd);
-    //             //     perror ("accept");
-    //             //     // break;
-    //             //     return;
-    //             // }
-    //         }
-    //         // /* Get information of client */
-    //         // s = getnameinfo(&in_addr, in_len, hbuf, NI_MAXHOST, sbuf, NI_MAXSERV, NI_NUMERICHOST | NI_NUMERICSERV);
-    //         // if (s < 0)
-    //         //     handle_error("getnameinfo");
-    //         // else if (s == 0){};
-    //             // printf("Accept connection on decriptor %d, from %s:%s\n", infd, hbuf, sbuf);
-    //         s = setnonblocking(infd);
-    //         if (s == -1)
-    //         {
-    //             close(infd);
-    //             handle_error("setnonblocking new connection");
-    //         }
-    //         event.data.fd = infd;
-    //         event.events = EPOLLIN | EPOLLET;
-    //         s = epoll_ctl (epollfd, EPOLL_CTL_ADD, infd, &event);
-    //         if (s < 0)
-    //         {
-    //             close(infd);
-    //             handle_error("epoll_ctl new connection");
-    //         }
-    //         // else 
-    //         //     printf("ADD %d to poll\n", infd);
-    //     // }
-    // }
+    
 
     void HttpServer::handleData(int conn_fd)
     {
@@ -403,17 +279,6 @@ namespace my_http_server
             handle_error("listener");        
     }
 
-    // bool checkMatchedSocket(int eventfd)
-    // {
-    //     int idx;
-    //     for (idx = 0; idx < NUM_SOCKET; idx++)
-    //     {
-    //         if (socketList[idx] == eventfd)
-    //             return true;
-    //     }
-    //     return false;
-    // }
-
 
     void HttpServer::openSocket()
     {
@@ -429,10 +294,9 @@ namespace my_http_server
         startSocket(socket_fd);
         
         initThreadResource();
-        // startCheckingThread();
         initEpollList();
 
-          /* The event loop => socket keep listening */
+        /* The event loop => socket keep listening */
         while (1)
         {
             int client_fd = accept4(socket_fd, &in_addr, &in_len, SOCK_NONBLOCK);
@@ -457,46 +321,6 @@ namespace my_http_server
             else
                 currentWorker ++;
             currentWorker %= THREAD_POOL_SIZE;
-
-            // int n, idx;
-            // n = epoll_wait (sharedEpollfd, events, MAX_EVENTS, -1);
-            // for (idx = 0; idx < n; idx ++)
-            // {
-            //     if (events[idx].events & EPOLLERR)
-            //         printf("ERROR HAPPENED, EPOLLERR, error num = %d, fd = %d\n", events[idx].events, events[idx].data.fd);
-            //     else if (events[idx].events & EPOLLHUP)
-            //         printf("ERROR HAPPENED, EPOLLHUP, error num = %d, fd = %d\n", events[idx].events, events[idx].data.fd);
-            //     else if (!(events[idx].events & EPOLLIN))
-            //     {
-            //         printf("ERROR HAPPENED, not EPOLLIN error num = %d, fd = %d\n", events[idx].events, events[idx].data.fd);
-            //         // close(events[idx].data.fd);
-            //         // continue;
-            //     }
-	        //     else if (checkMatchedSocket(events[idx].data.fd))
-            //     {
-            //         handleConnection(events[idx].data.fd, sharedEpollfd);
-            //     }
-            //     else
-            //     {
-            //         // int thread_idx = getResource();
-            //         // while (thread_idx < 0)
-            //         // {
-            //         //     thread_idx = getResource();
-            //         //     // printf("pidx is %d\n", thread_idx);
-            //         //     usleep(100);
-            //         // }
-            //         // pthread_mutex_lock(&mutex);
-            //         // // TODO: push events[idx].data.fd to queue
-            //         // thread_infos[thread_idx].event_fd = events[idx].data.fd;
-            //         // thread_infos[thread_idx].epollfd = sharedEpollfd;
-            //         // thread_infos[thread_idx].thread_idx = thread_idx;
-            //         // pthread_mutex_unlock(&mutex);
-            //         int event_fd = events[idx].data.fd;
-                    
-            //         // pthread_mutex_unlock(&queue_mutex);
-            //         fd_queue.push(std::make_pair(sharedEpollfd, event_fd));
-            //         // pthread_mutex_unlock(&queue_mutex);
-            //     }
         }
     }
 
