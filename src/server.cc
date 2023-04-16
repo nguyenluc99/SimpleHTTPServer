@@ -18,6 +18,7 @@
 #include <fcntl.h>
 #include <ev.h>
 
+
 namespace my_http_server
 {
 
@@ -28,18 +29,20 @@ namespace my_http_server
     const int sampleLength = 88;
     // const char* sampleResponse = "dummy\n";
     // const int sampleLength = 6;
-    SharedThread    thread_infos[MAX_THREADS];
+    SharedThread    thread_infos[THREAD_POOL_SIZE];
+    int             epoll_list[THREAD_POOL_SIZE];
+    epoll_event worker_events_list[THREAD_POOL_SIZE][MAX_EVENTS];
     // pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
     // pthread_mutex_t queue_mutex = PTHREAD_MUTEX_INITIALIZER;
-    int sharedEpollfd = -1;
-    int socketList[NUM_SOCKET];
-    TSQueue<std::pair<int, int> > fd_queue; // first = epollfd, second = event_fd;
+    // int sharedEpollfd = -1;
+    // int socketList[NUM_SOCKET];
+    // TSQueue<std::pair<int, int> > fd_queue; // first = epollfd, second = event_fd;
 
     // int countWorkingThread()
     // {
     //     int count = 0, idx;
     //     pthread_mutex_lock(&mutex);
-    //     for (idx = 0; idx < MAX_THREADS; idx++) 
+    //     for (idx = 0; idx < THREAD_POOL_SIZE; idx++) 
     //         if (thread_infos[idx].state == THREAD_RUNNING)
     //             count ++;
     //     pthread_mutex_unlock(&mutex);
@@ -61,42 +64,42 @@ namespace my_http_server
     //     ev_break (EV_A_ EVBREAK_ALL);
     // }
 
-    void data_cb (EV_P_ ev_io *w_, int revents)
-    {
-        struct my_io *w = (struct my_io *)w_;
+    // void data_cb (EV_P_ ev_io *w_, int revents)
+    // {
+    //     struct my_io *w = (struct my_io *)w_;
 
-        // for one-shot events, one must manually stop the watcher
-        // with its corresponding stop function.
-        int size;
-        int bufferSize = 10;
-        char buffer[bufferSize] = {0};
+    //     // for one-shot events, one must manually stop the watcher
+    //     // with its corresponding stop function.
+    //     int size;
+    //     int bufferSize = 10;
+    //     char buffer[bufferSize] = {0};
 
-        // printf("Processing fd %d\n", w_->fd);
-        // while(1)
-        // {
-        size = read(w_->fd, buffer, bufferSize);
-        // usleep(100000);
-        send(w_->fd, sampleResponse, strlen(sampleResponse), 0);
-        // }
-        ev_io_stop (EV_A_ w_);
-        // this causes all nested ev_run's to stop iterating
-        ev_break (EV_A_ EVBREAK_ONE);
-        // else
-        //     printf("del %d from poll\n", w_->fd);
+    //     // printf("Processing fd %d\n", w_->fd);
+    //     // while(1)
+    //     // {
+    //     size = read(w_->fd, buffer, bufferSize);
+    //     // usleep(100000);
+    //     send(w_->fd, sampleResponse, strlen(sampleResponse), 0);
+    //     // }
+    //     ev_io_stop (EV_A_ w_);
+    //     // this causes all nested ev_run's to stop iterating
+    //     ev_break (EV_A_ EVBREAK_ONE);
+    //     // else
+    //     //     printf("del %d from poll\n", w_->fd);
 
 
-        // TODO: fix this
-        // let the parent know that the child is processing the fd, so remove the fd from parent epollfd right now
-        struct epoll_event event;
-        event.data.fd = w->io.fd;
-        event.events = EPOLLIN | EPOLLET; // EPOLLET  = edge-triggered
-        int s = epoll_ctl (w->shared->epollfd, EPOLL_CTL_DEL, w->io.fd, &event);
-        if (s < 0)
-            handle_error("epoll_ctl del connection");
-        /* Close conenction after reading */
-        close(w_->fd);
-        free(w->shared);
-    }
+    //     // TODO: fix this
+    //     // let the parent know that the child is processing the fd, so remove the fd from parent epollfd right now
+    //     struct epoll_event event;
+    //     event.data.fd = w->io.fd;
+    //     event.events = EPOLLIN | EPOLLET; // EPOLLET  = edge-triggered
+    //     int s = epoll_ctl (w->shared->epollfd, EPOLL_CTL_DEL, w->io.fd, &event);
+    //     // if (s < 0)
+    //     //     handle_error("epoll_ctl del connection");
+    //     /* Close conenction after reading */
+    //     close(w_->fd);
+    //     free(w->shared);
+    // }
 
     // another callback, this time for a time-out
     void timeout_cb (EV_P_ ev_timer *w, int revents)
@@ -142,32 +145,31 @@ namespace my_http_server
         int opt = 1;
         int server_fd;
         int idx;
-        for (idx = 0; idx < NUM_SOCKET; idx++)
-        {
-            server_fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
-            len = sizeof(servaddr);
+    
+        server_fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
+        len = sizeof(servaddr);
 
-            if (server_fd == -1)
-            handle_error("SOCKET ERROR");
-            // Forcefully attaching socket to the port SOCKET_PORT
-            if (setsockopt(server_fd, SOL_SOCKET,
-                        SO_REUSEADDR | SO_REUSEPORT, &opt,
-                        // SO_REUSEADDR, &opt,
-                        sizeof(opt)))
-                handle_error("setsockopt");
+        if (server_fd == -1)
+        handle_error("SOCKET ERROR");
+        // Forcefully attaching socket to the port SOCKET_PORT
+        if (setsockopt(server_fd, SOL_SOCKET,
+                    SO_REUSEADDR | SO_REUSEPORT, &opt,
+                    // SO_REUSEADDR, &opt,
+                    sizeof(opt)))
+            handle_error("setsockopt");
 
-            servaddr.sin_family = AF_INET;
-            servaddr.sin_addr.s_addr = INADDR_ANY;
-            servaddr.sin_port = htons(HTTP_PORT);
+        servaddr.sin_family = AF_INET;
+        servaddr.sin_addr.s_addr = INADDR_ANY;
+        servaddr.sin_port = htons(getPort());
 
-            if (bind(server_fd, (struct sockaddr *) &servaddr, sizeof(servaddr)) == -1)
-                handle_error("bind");
-            socketList[idx] = server_fd;
-        }
-        return 0;
+        if (bind(server_fd, (struct sockaddr *) &servaddr, sizeof(servaddr)) == -1)
+            handle_error("bind");
+            
+        return server_fd;
     }
 
-    int HttpServer::setnonblocking(int socket_fd) { // https://stackoverflow.com/questions/27266346/how-to-set-file-descriptor-non-blocking
+    int HttpServer::setnonblocking(int socket_fd) // https://stackoverflow.com/questions/27266346/how-to-set-file-descriptor-non-blocking
+    {
         int opt;
 
         opt = fcntl(socket_fd, F_GETFD);
@@ -183,34 +185,11 @@ namespace my_http_server
         return 0;
     }
 
-    // int HttpServer::setupServer(struct sockaddr_in& servaddr){
-    //     int server_fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
-    //     int opt = 1;
-
-    //     if (server_fd == -1)
-    //         handle_error("open\n");
-
-    //     // Forcefully attaching socket to the port SOCKET_PORT
-    //     if (setsockopt(server_fd, SOL_SOCKET,
-    //                 //    SO_REUSEADDR | SO_REUSEPORT, &opt,
-    //                 SO_REUSEADDR, &opt,
-    //                 sizeof(opt)))
-    //         handle_error("setsockopt");
-
-
-    //     if (bind(server_fd, (struct sockaddr *) &servaddr, sizeof(servaddr)) == -1)
-    //         handle_error("bind");
-
-    //     if (listen(server_fd, 10) == -1)
-    //         handle_error("listen");
-    //     return server_fd;
-    // }
-    
     // int getResource()
     // {
     //     int idx;
     //     pthread_mutex_lock(&mutex);
-    //     for (idx = 0; idx < MAX_THREADS; idx++)
+    //     for (idx = 0; idx < THREAD_POOL_SIZE; idx++)
     //         if (thread_infos[idx].state == THREAD_WAITING)
     //         {
     //             thread_infos[idx].state = THREAD_RUNNING; // ask child to start processing on events[idx].data.fd
@@ -224,66 +203,52 @@ namespace my_http_server
     void* threadStart(void* arg)
     {
         SharedThread* shared = (SharedThread*) arg;
-        
-        std::pair<int, int> queue_ele;
         int size;
         int bufferSize = 1024;
         char buffer[bufferSize] = {0};
-        struct epoll_event event;
-        int event_fd, epollfd, s;
+        int s, conn_fd;
+        int workingThr = shared->thread_idx;
+        EventData *edata;
         while(1)
-        {   
-            // bool emp = true;
-            queue_ele = fd_queue.pop();
+        {
+            int n, idx;
+            n = epoll_wait (epoll_list[workingThr], worker_events_list[workingThr], MAX_EVENTS, -1);
+            for (idx = 0; idx < n; idx ++)
+            {
+                if (worker_events_list[workingThr][idx].events & EPOLLERR)
+                    printf("ERROR HAPPENED, EPOLLERR\n");
+                else if (worker_events_list[workingThr][idx].events & EPOLLHUP)
+                    printf("ERROR HAPPENED, EPOLLHUP\n");
+                else if (!(worker_events_list[workingThr][idx].events & EPOLLIN))
+                    printf("ERROR HAPPENED, not EPOLLI\n");
+                else
+                {
+                    // process data here
+                    edata = (EventData*) worker_events_list[workingThr][idx].data.ptr;
+                    conn_fd = edata->fd;
+                    bool done = false;
 
-            // pthread_mutex_lock(&mutex);
-            // shared->state = THREAD_RUNNING;   
-            // pthread_mutex_unlock(&mutex);
-            // try not using ev_...
-            epollfd = queue_ele.first;
-            event_fd= queue_ele.second;
+                    size = read(conn_fd, buffer, 1024);
+                    if (size == -1) // 0 means done or client closed, -1 means error
+                    {
+                        if (errno != EAGAIN)
+                        {
+                            done = true;
+                            /* we just read all data, no more data to read */
+                        }
+                    }
+                    else if (size == 0)
+                    {
+                        done = 1;
+                    }
+                    write(conn_fd, sampleResponse, sampleLength);
 
-            size = recv(event_fd, buffer, bufferSize, MSG_DONTWAIT);
-            write(event_fd, sampleResponse, sampleLength);
-            // send(event_fd, "sampleResponse", strlen(sampleResponse), 0);
-
-            event.data.fd = event_fd;
-            event.events = EPOLLIN | EPOLLET; // EPOLLET  = edge-triggered
-            s = epoll_ctl (epollfd, EPOLL_CTL_DEL, event_fd, &event);
-            if (s < 0)
-                handle_error("epoll_ctl del connection");
-
-            close(event_fd);
-
-
-            printf("DONE %d requests\n", fd_queue.counter);
-            // fd_queue.popCount();
-            // pthread_mutex_lock(&mutex);
-            // shared->state = THREAD_WAITING;   
-            // pthread_mutex_unlock(&mutex);
-            // free(w->shared);
-
-            // struct ev_loop *loop  = ev_default_loop(EVBACKEND_EPOLL);
-            // my_io mio;      
-            // ev_timer timeout_watcher;
-
-            // mio.shared = (SharedThread*) malloc(sizeof(SharedThread));
-            // mio.shared->epollfd = queue_ele.first;
-            // mio.io.fd = queue_ele.second;
-            // // shared->event_fd = queue_ele.second;
-            // ev_io_init ((ev_io*)&mio.io, data_cb, mio.io.fd, EV_READ); // ? mio.io.fd?
-            
-            // ev_io_start (loop, (ev_io*)&mio.io);
-            // // initialise a timer watcher, then start it
-            // // simple non-repeating 5.5 second timeout
-            // // ev_timer_init (&timeout_watcher, timeout_cb, 0.1, 0.);
-            // // ev_timer_start (loop, &timeout_watcher);
-            
-            // // now wait for events to arrive
-            // ev_run (loop, 0);
-            // // ev_timer_stop (loop, &timeout_watcher);
-            //     /* Recycle */ 
-            // ev_loop_destroy(loop);    
+                    /* Close conenction after reading */
+                    close(conn_fd);
+                    // TODO: Handle more deeply
+                    free(edata);// raised?
+                }
+            }
 
         }
     }
@@ -291,21 +256,23 @@ namespace my_http_server
     void initThreadResource()
     {
         int idx;
-        for (idx = 0; idx < MAX_THREADS; idx++) {
-            // thread_infos[idx].thread_idx = -1;
-            // thread_infos[idx].state = THREAD_WAITING;
-            // start thread
+        for (idx = 0; idx < THREAD_POOL_SIZE; idx++)
+        {
+            thread_infos[idx].thread_idx = idx;
             pthread_t pid;
-            // https://9to5answer.com/how-to-set-the-stacksize-with-c-11-std-thread
-            // pthread_attr_t attribute;
-            // pthread_attr_init(&attribute);
-            // pthread_attr_setstacksize(&attribute, PTHREAD_STACK_MIN);
-            // int err = pthread_create(&pid, &attribute, threadStart, (void*)&thread_infos[idx]);
             int err = pthread_create(&pid, NULL, threadStart, (void*)&thread_infos[idx]);
-            if (err == 0)
-                printf("thread %d start successfully, size is %d\n", idx, PTHREAD_STACK_MIN);
+            if (err == 0){}
+                // printf("thread %d start successfully\n", idx);
             else 
                 printf("thread %d FAILED\n", idx);
+        }
+    }
+    void initEpollList()
+    {
+        int idx;
+        for (idx = 0; idx < THREAD_POOL_SIZE; idx++)
+        {
+            epoll_list[idx] = epoll_create1(0);
         }
     }
     // void *checkThread(void* arg)
@@ -316,7 +283,7 @@ namespace my_http_server
     //         // pthread_mutex_lock(&queue_mutex);
     //         int queuesize = fd_queue.size();
     //         // pthread_mutex_unlock(&queue_mutex);
-    //         printf("working thread is  %d / %d, queue size is %d\n", workingThread, (int)MAX_THREADS, queuesize);
+    //         printf("working thread is  %d / %d, queue size is %d\n", workingThread, (int)THREAD_POOL_SIZE, queuesize);
     //         usleep(100000);
     //     }
     // }
@@ -327,202 +294,211 @@ namespace my_http_server
     // }
 
 
-    void HttpServer::handleConnection(int socket_fd, int epollfd)
-    {
-        // printf("Connection arrived on fd %d\n", socket_fd);
-        // while(1)
-        // {
-            printf("Handling %d requests\n", fd_queue.counter ++);
-            struct sockaddr in_addr;
-            socklen_t in_len;
-            int infd, s;
-            // char hbuf[NI_MAXHOST], sbuf[NI_MAXSERV];
-            struct epoll_event event;
-
-            in_len = sizeof(in_addr);
-            infd = accept(socket_fd, &in_addr, &in_len);
-            if (infd <= 0) // error
-            {
-                // if ((errno == EAGAIN) ||
-                //     (errno == EWOULDBLOCK))
-                // {
-                //     /* We have processed all incoming
-                //         connections. */
-                //     // break;
-                printf("ERROR");
-                    close(infd);
-                    return;
-                // }
-                // else
-                // {
-                //     close(infd);
-                //     perror ("accept");
-                //     // break;
-                //     return;
-                // }
-            }
-            // /* Get information of client */
-            // s = getnameinfo(&in_addr, in_len, hbuf, NI_MAXHOST, sbuf, NI_MAXSERV, NI_NUMERICHOST | NI_NUMERICSERV);
-            // if (s < 0)
-            //     handle_error("getnameinfo");
-            // else if (s == 0){};
-                // printf("Accept connection on decriptor %d, from %s:%s\n", infd, hbuf, sbuf);
-            s = setnonblocking(infd);
-            if (s == -1)
-            {
-                close(infd);
-                handle_error("setnonblocking new connection");
-            }
-            event.data.fd = infd;
-            event.events = EPOLLIN | EPOLLET;
-            s = epoll_ctl (epollfd, EPOLL_CTL_ADD, infd, &event);
-            if (s < 0)
-            {
-                close(infd);
-                handle_error("epoll_ctl new connection");
-            }
-            // else 
-            //     printf("ADD %d to poll\n", infd);
-        // }
-    }
-
-    // void HttpServer::handleData(struct epoll_event event)
+    // void HttpServer::handleConnection(int socket_fd, int epollfd)
     // {
-    //     bool done = false;
-    //     // while(!done)
+    //     // printf("Connection arrived on fd %d\n", socket_fd);
+    //     // while(1)
     //     // {
-    //         int size;
-    //         char buffer[1024] = {0};
+    //         // printf("Handling %d requests\n", fd_queue.counter ++);
+    //         struct sockaddr in_addr;
+    //         socklen_t in_len;
+    //         int infd, s;
+    //         // char hbuf[NI_MAXHOST], sbuf[NI_MAXSERV];
+    //         struct epoll_event event;
 
-    //         size = read(event.data.fd, buffer, 1024); // stuck after reading => keep waiting for request.
-    //         if (size == -1) // 0 means done, -1 means error
+    //         in_len = sizeof(in_addr);
+    //         infd = accept4(socket_fd, &in_addr, &in_len, SOCK_NONBLOCK);
+    //         if (infd <= 0) // error
     //         {
-    //             if (errno != EAGAIN)
-    //             {
-    //                 done = true;
-    //                 /* we just read all data, no more data to read */
-    //             }
-    //             // break;
+    //             // if ((errno == EAGAIN) ||
+    //             //     (errno == EWOULDBLOCK))
+    //             // {
+    //             //     /* We have processed all incoming
+    //             //         connections. */
+    //             //     // break;
+    //             printf("ERROR");
+    //                 close(infd);
+    //                 return;
+    //             // }
+    //             // else
+    //             // {
+    //             //     close(infd);
+    //             //     perror ("accept");
+    //             //     // break;
+    //             //     return;
+    //             // }
     //         }
-    //         else if (size == 0)
+    //         // /* Get information of client */
+    //         // s = getnameinfo(&in_addr, in_len, hbuf, NI_MAXHOST, sbuf, NI_MAXSERV, NI_NUMERICHOST | NI_NUMERICSERV);
+    //         // if (s < 0)
+    //         //     handle_error("getnameinfo");
+    //         // else if (s == 0){};
+    //             // printf("Accept connection on decriptor %d, from %s:%s\n", infd, hbuf, sbuf);
+    //         s = setnonblocking(infd);
+    //         if (s == -1)
     //         {
-    //             done = 1;
-    //             // break;
+    //             close(infd);
+    //             handle_error("setnonblocking new connection");
     //         }
-    //         // else
-    //         // {
-    //             // printf("Receive: %s\n.", buffer);
-    //             // usleep(1e6 / MAXEVENTS); // max 10req / sec
-    //             // std::string *res = new std::string("HTTP/1.1 200 OK\nServer: Hello\nContent-Length: 13\nContent-Type: text/plain\n\nHello, world\n");
-    //             write(event.data.fd, sampleResponse, sampleLength);
-    //             // free(res);
-    //         // }
-            
+    //         event.data.fd = infd;
+    //         event.events = EPOLLIN | EPOLLET;
+    //         s = epoll_ctl (epollfd, EPOLL_CTL_ADD, infd, &event);
+    //         if (s < 0)
+    //         {
+    //             close(infd);
+    //             handle_error("epoll_ctl new connection");
+    //         }
+    //         // else 
+    //         //     printf("ADD %d to poll\n", infd);
     //     // }
-    //     /* Close conenction after reading */
-    //     close(event.data.fd);
     // }
 
+    void HttpServer::handleData(int conn_fd)
+    {
+        bool done = false;
+        int size;
+        char buffer[1024] = {0};
 
-    void startSocket()
+        size = read(conn_fd, buffer, 1024); // stuck after reading => keep waiting for request.
+        if (size == -1) // 0 means done, -1 means error
+        {
+            if (errno != EAGAIN)
+            {
+                done = true;
+                /* we just read all data, no more data to read */
+            }
+        }
+        else if (size == 0)
+        {
+            done = 1;
+        }
+        write(conn_fd, sampleResponse, sampleLength);
+
+        /* Close conenction after reading */
+        close(conn_fd);
+    }
+
+
+    // now, run only 1 socket with many epoll.
+    void startSocket(int socket_fd)
     {
         int idx, s;
         struct epoll_event event;
         
-        for (idx = 0; idx < NUM_SOCKET; idx++)
-        {
-            int socket_fd = socketList[idx];
-            // s = setnonblocking(socket_fd);
-            if (s == -1)
-                handle_error("setnonblocking");
-            s = listen(socket_fd, MAX_CONCURRENT_REQ);
-            if (s == -1)
-                handle_error("listener");
+        int opt;
 
-            event.data.fd = socket_fd;
-            event.events = EPOLLIN | EPOLLET; // edge-triggered on input
-            s = epoll_ctl(sharedEpollfd, EPOLL_CTL_ADD, socket_fd, &event);
-            if (s < 0)
-                handle_error("epoll_ctl");
-            else 
-                printf("DONE ADD INITIAL listener_fd %d\n", socket_fd);
+        opt = fcntl(socket_fd, F_GETFD);
+        if (opt < 0) {
+            printf("fcntl(F_GETFD) fail.");
+            handle_error("setnonblocking");
         }
+        opt |= O_NONBLOCK;
+        if (fcntl(socket_fd, F_SETFD, opt) < 0) {
+            printf("fcntl(F_SETFD) fail.");
+            handle_error("setnonblocking");
+        }
+        
+        s = listen(socket_fd, BACKLOGSIZE);
+        if (s == -1)
+            handle_error("listener");        
     }
 
-    bool checkMatchedSocket(int eventfd)
-    {
-        int idx;
-        for (idx = 0; idx < NUM_SOCKET; idx++)
-        {
-            if (socketList[idx] == eventfd)
-                return true;
-        }
-        return false;
-    }
+    // bool checkMatchedSocket(int eventfd)
+    // {
+    //     int idx;
+    //     for (idx = 0; idx < NUM_SOCKET; idx++)
+    //     {
+    //         if (socketList[idx] == eventfd)
+    //             return true;
+    //     }
+    //     return false;
+    // }
 
 
     void HttpServer::openSocket()
     {
-        int connection_fd, varlend;
         int s;
-        sharedEpollfd = epoll_create1(0);
-        struct epoll_event events[MAXEVENTS];
+        struct epoll_event events[MAX_EVENTS];
+        int currentWorker = 0;
+        EventData *client_data;
 
-        if (sharedEpollfd < 0)
-            handle_error("epoll create");
+        struct sockaddr in_addr;
+        socklen_t in_len;
 
-        init_and_bind(getPort());
-        startSocket();
+        int socket_fd = init_and_bind(getPort());
+        startSocket(socket_fd);
         
         initThreadResource();
         // startCheckingThread();
+        initEpollList();
 
-          /* The event loop */
+          /* The event loop => socket keep listening */
         while (1)
         {
-            // printf("Process done: %d\n", fd_queue.getCount());
-            int n, idx;
-            n = epoll_wait (sharedEpollfd, events, MAXEVENTS, -1);
-            for (idx = 0; idx < n; idx ++)
+            int client_fd = accept4(socket_fd, &in_addr, &in_len, SOCK_NONBLOCK);
+            if (client_fd < 0)
             {
-                if (events[idx].events & EPOLLERR)
-                    printf("ERROR HAPPENED, EPOLLERR, error num = %d, fd = %d\n", events[idx].events, events[idx].data.fd);
-                else if (events[idx].events & EPOLLHUP)
-                    printf("ERROR HAPPENED, EPOLLHUP, error num = %d, fd = %d\n", events[idx].events, events[idx].data.fd);
-                else if (!(events[idx].events & EPOLLIN))
-                {
-                    printf("ERROR HAPPENED, not EPOLLIN error num = %d, fd = %d\n", events[idx].events, events[idx].data.fd);
-                    // close(events[idx].data.fd);
-                    // continue;
-                }
-	            else if (checkMatchedSocket(events[idx].data.fd))
-                {
-                    handleConnection(events[idx].data.fd, sharedEpollfd);
-                }
-                else
-                {
-                    // int thread_idx = getResource();
-                    // while (thread_idx < 0)
-                    // {
-                    //     thread_idx = getResource();
-                    //     // printf("pidx is %d\n", thread_idx);
-                    //     usleep(100);
-                    // }
-                    // pthread_mutex_lock(&mutex);
-                    // // TODO: push events[idx].data.fd to queue
-                    // thread_infos[thread_idx].event_fd = events[idx].data.fd;
-                    // thread_infos[thread_idx].epollfd = sharedEpollfd;
-                    // thread_infos[thread_idx].thread_idx = thread_idx;
-                    // pthread_mutex_unlock(&mutex);
-                    int event_fd = events[idx].data.fd;
-                    
-                    // pthread_mutex_unlock(&queue_mutex);
-                    fd_queue.push(std::make_pair(sharedEpollfd, event_fd));
-                    // pthread_mutex_unlock(&queue_mutex);
-                }
+                // usleep(100);
+                continue;
             }
+            // distribute client fd to a worker
+            client_data = new EventData();
+            client_data->fd = client_fd;
+            struct epoll_event event;
+            event.data.ptr = (void*) client_data;
+            event.events = EPOLLIN;
+
+            s = epoll_ctl(epoll_list[currentWorker], EPOLL_CTL_ADD, client_fd, &event);
+            if (s < 0)
+            {
+                printf("Error adding task to worker %d.", currentWorker);
+                perror("Error adding task to worker");
+            }
+            else
+                currentWorker ++;
+            currentWorker %= THREAD_POOL_SIZE;
+
+            // int n, idx;
+            // n = epoll_wait (sharedEpollfd, events, MAX_EVENTS, -1);
+            // for (idx = 0; idx < n; idx ++)
+            // {
+            //     if (events[idx].events & EPOLLERR)
+            //         printf("ERROR HAPPENED, EPOLLERR, error num = %d, fd = %d\n", events[idx].events, events[idx].data.fd);
+            //     else if (events[idx].events & EPOLLHUP)
+            //         printf("ERROR HAPPENED, EPOLLHUP, error num = %d, fd = %d\n", events[idx].events, events[idx].data.fd);
+            //     else if (!(events[idx].events & EPOLLIN))
+            //     {
+            //         printf("ERROR HAPPENED, not EPOLLIN error num = %d, fd = %d\n", events[idx].events, events[idx].data.fd);
+            //         // close(events[idx].data.fd);
+            //         // continue;
+            //     }
+	        //     else if (checkMatchedSocket(events[idx].data.fd))
+            //     {
+            //         handleConnection(events[idx].data.fd, sharedEpollfd);
+            //     }
+            //     else
+            //     {
+            //         // int thread_idx = getResource();
+            //         // while (thread_idx < 0)
+            //         // {
+            //         //     thread_idx = getResource();
+            //         //     // printf("pidx is %d\n", thread_idx);
+            //         //     usleep(100);
+            //         // }
+            //         // pthread_mutex_lock(&mutex);
+            //         // // TODO: push events[idx].data.fd to queue
+            //         // thread_infos[thread_idx].event_fd = events[idx].data.fd;
+            //         // thread_infos[thread_idx].epollfd = sharedEpollfd;
+            //         // thread_infos[thread_idx].thread_idx = thread_idx;
+            //         // pthread_mutex_unlock(&mutex);
+            //         int event_fd = events[idx].data.fd;
+                    
+            //         // pthread_mutex_unlock(&queue_mutex);
+            //         fd_queue.push(std::make_pair(sharedEpollfd, event_fd));
+            //         // pthread_mutex_unlock(&queue_mutex);
+            //     }
         }
-    };
+    }
 
     void HttpServer::openEV() // open 4 thread and ask them to wait on specificed fd?
     {

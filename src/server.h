@@ -26,16 +26,32 @@
 
 
 // #define SOCKET_PATH         "/tmp/my.sock"
-#define MAX_CONCURRENT_REQ  10000
-#define MAXEVENTS           100000
-#define HTTP_PORT           3000
-#define MAX_THREADS         1
-#define NUM_SOCKET          1
-
+// #define BACKLOGSIZE  20000
+// #define MAX_EVENTS           10000
+// #define HTTP_PORT           3000
+// #define BASE_SHIFT          9
+// #define THREAD_POOL_SIZE         256
+// #define NUM_SOCKET          1
+// #define BUFFER_SIZE          4096
 
 
 namespace my_http_server
 {
+
+    static constexpr int BACKLOGSIZE = 1000;
+    // static constexpr int MAX_CONCURR_CONNECTION = 10000;
+    static constexpr int MAX_EVENTS = 10000;
+    static constexpr int THREAD_POOL_SIZE = 5;
+    static constexpr int BUFFER_SIZE = 4096;
+    
+    
+    struct EventData {
+        EventData() : fd(0), length(0), cursor(0), buffer() {}
+        int fd;
+        size_t length;
+        size_t cursor;
+        char buffer[BUFFER_SIZE];
+    };
 
         // Thread-safe queue
     template <typename T>
@@ -129,11 +145,11 @@ namespace my_http_server
     typedef struct SharedThread
     {
         // int                         event_fd;       /* file discriptor that this thread is handling */
-        int                         epollfd;        /* the epoll file discriptor */
-        // int                         thread_idx;     /* index of this thread, to revtrieve back */
+        // int                         epollfd;        /* the epoll file discriptor */
+        int                         thread_idx;     /* index of this thread, to revtrieve back */
         // ThreadExeState              state;          /* execution state */
         // pthread_t                   thread_id;
-        SharedThread(){epollfd = -1;};
+        SharedThread(){thread_idx=-1;};
         // SharedThread(){event_fd = -1; epollfd = -1; thread_idx = -1; state = THREAD_FREE;};
     } SharedThread;
     typedef struct my_io        /* used for interaction with ev */
@@ -145,7 +161,7 @@ namespace my_http_server
         // struct whatever *mostinteresting;
     } my_io;
 
-    extern SharedThread thread_infos[MAX_THREADS];
+    extern SharedThread thread_infos[THREAD_POOL_SIZE];
     extern pthread_mutex_t mutex;
     
     char* getIP();
@@ -156,8 +172,8 @@ namespace my_http_server
             int init_and_bind(int port);
             int setnonblocking(int socket_fd);
             int setupServer(struct sockaddr_in& servaddr);
-            void handleConnection(int socket_fd, int epollfd);
-            void handleData(struct epoll_event event);
+            // void handleConnection(int socket_fd, int epollfd);
+            void handleData(int conn_fd);
 
 
         public:
